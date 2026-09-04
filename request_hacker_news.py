@@ -5,6 +5,8 @@ from dataclasses import dataclass, asdict
 import json
 import time
 from functools import wraps
+from pydantic import BaseModel, Field, field_validator
+from typing import Annotated
 
 def retry(attempts: int = 5, delay: float = 1.0, backoff: float = 2.0):
     def decorator(func):
@@ -28,36 +30,39 @@ def retry(attempts: int = 5, delay: float = 1.0, backoff: float = 2.0):
             return output
         return wrapper
     return decorator
-@dataclass
-class Story:
-    rank: int | None
+
+class Story(BaseModel):
+    rank: int | None = None
     title: str
     url: str
-    site: str | None
-    score: int | None
-    time: str | None
-    author: str | None
+    site: str | None = None
+    score: int | None = None
+    time: str | None = None
+    author: str | None = None
 
-    def __str__(self):
+    def __str__(self) -> str:
         site = f' ({self.site})' if self.site else ''
         return f'{self.rank}. {self.title}{site} — {self.score or 0} pts by {self.author or "?"} {self.time or ""}'
-    
+
     def to_dict(self) -> dict:
-        return asdict(self)
+        return self.model_dump()
 
-class HackerNewsPage:
 
-    class PageNumberException(Exception):
-        def __init__(self, *args):
-            super().__init__(*args)
+class PageNumberError(Exception):
+    def __init__(self, *args):
+        super().__init__(*args)
+
+class HackerNewsPage(BaseModel):
+
+    page_no: int = Field(ge=1)
+    tuple_of_stories: tuple[Story, ...]
     
-    def __init__(self, page_no:int, tuple_of_stories:tuple[Story]):
-
-        if page_no < 1:
-            raise self.PageNumberException('Page number must be an int greater than 1.')
-
-        self.page_no = page_no
-        self.tuple_of_stories = tuple_of_stories
+    @field_validator("page_no")
+    @classmethod
+    def check_page_no(cls, v: int) -> int:
+        if v < 1:
+            raise PageNumberError("Page number must be an int of 1 or greater.")
+        return v
     
     @property
     def stories(self) -> list[Story]:
@@ -66,6 +71,12 @@ class HackerNewsPage:
     @property
     def page_number(self) -> int:
         return self.page_no
+    
+    def to_dict(self) -> dict:
+        return {
+            "page_no": self.page_no,
+            "stories": [s.to_dict() for s in self.tuple_of_stories],
+        }
 
 class HackerNewsHandler:
     class PageNumberNotFound(Exception):
@@ -77,7 +88,8 @@ class HackerNewsHandler:
 
     def refresh_page(self, page_no:int) -> None:
         if self.news_pages.get(page_no):
-            self.news_pages[page_no] = HackerNewsPage(page_no, tuple(self._fetch_news(page_no)))
+            self.news_pages[page_no] = HackerNewsPage(
+                page_no=page_no, tuple_of_stories=tuple(self._fetch_news(page_no)))
         else:
             raise self.PageNumberNotFound("Page not found in stored pages")
         
@@ -87,7 +99,8 @@ class HackerNewsHandler:
             
     def fetch_page(self, page_no:int) -> None:
         if not self.news_pages.get(page_no):
-            self.news_pages[page_no] = HackerNewsPage(page_no, tuple(self._fetch_news(page_no)))
+            self.news_pages[page_no] = HackerNewsPage(
+                page_no=page_no, tuple_of_stories=tuple(self._fetch_news(page_no)))
             
     def page(self, page_id: int) -> HackerNewsPage | None:
         self.fetch_page(page_id)
